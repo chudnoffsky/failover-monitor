@@ -1,0 +1,86 @@
+# тестовые приложения nginx
+# монитор/failover и сервис мониторинга сервера cAdvisor
+
+services:
+  app1:
+    image: nginx:1.31.2-alpine
+    container_name: app1
+    hostname: app1
+    environment:
+      MONITOR_TOKEN: ${MONITOR_TOKEN:-secret-token}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--header", "X-Auth-Token: ${MONITOR_TOKEN:-secret-token}", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  app2:
+    image: nginx:1.31.2-alpine
+    container_name: app2
+    hostname: app2
+    environment:
+      MONITOR_TOKEN: ${MONITOR_TOKEN:-secret-token}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--header", "X-Auth-Token: ${MONITOR_TOKEN:-secret-token}", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  app3:
+    image: nginx:1.31.2-alpine
+    container_name: app3
+    hostname: app3
+    environment:
+      MONITOR_TOKEN: ${MONITOR_TOKEN:-secret-token}
+    volumes:
+      - ./nginx/default.conf.template:/etc/nginx/templates/default.conf.template:ro
+    networks: [appnet]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "--header", "X-Auth-Token: ${MONITOR_TOKEN:-secret-token}", "http://localhost/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ${MONITOR_IMAGE:-failover-monitor:local}
+    container_name: monitor
+    environment:
+      CHECK_ADDRESSES: ${CHECK_ADDRESSES:-http://app1:80,http://app2:80,http://app3:80}
+      CHECK_URL: ${CHECK_URL:-/health}
+      CHECK_TOKEN: ${MONITOR_TOKEN:-secret-token}
+      TOKEN_HEADER: ${TOKEN_HEADER:-X-Auth-Token}
+      CHECK_INTERVAL: ${CHECK_INTERVAL:-5}
+      FAIL_THRESHOLD: ${FAIL_THRESHOLD:-3}
+      HTTP_TIMEOUT: ${HTTP_TIMEOUT:-3}
+      STATE_FILE: ${STATE_FILE:-/data/state.json}
+      STATUS_PORT: ${STATUS_PORT:-8080}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${STATUS_PORT:-8080}:8080"
+    volumes:
+      - monitor-state:/data
+    networks: [appnet]
+    depends_on:
+      - app1
+      - app2
+      - app3
+    restart: unless-stopped
+
+networks:
+  appnet:
+    driver: bridge
+
+volumes:
+  monitor-state:
