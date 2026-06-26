@@ -1,0 +1,10 @@
+.git
+.gitignore
+.env
+README.md
+Makefile
+deploy/
+monitoring/
+__pycache__/
+*.pyc
+.DS_Store
