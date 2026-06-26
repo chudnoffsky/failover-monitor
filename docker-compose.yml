@@ -1,6 +1,14 @@
 # тестовые приложения nginx
 # монитор/failover и сервис мониторинга сервера cAdvisor
 
+x-resources: &default-resources
+  resources:
+    limits:
+      cpus: "0.50"
+      memory: 256M
+    reservations:
+      memory: 64M
+
 services:
   app1:
     image: nginx:1.31.2-alpine
@@ -17,6 +25,7 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    deploy: *default-resources
 
   app2:
     image: nginx:1.31.2-alpine
@@ -33,6 +42,7 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    deploy: *default-resources
 
   app3:
     image: nginx:1.31.2-alpine
@@ -49,6 +59,7 @@ services:
       timeout: 3s
       retries: 3
     restart: unless-stopped
+    deploy: *default-resources
 
   monitor:
     build:
@@ -77,6 +88,21 @@ services:
       - app2
       - app3
     restart: unless-stopped
+    deploy: *default-resources
+
+  cadvisor:
+    image: ghcr.io/google/cadvisor:v0.60.3
+    container_name: cadvisor
+    ports:
+      - "${CADVISOR_PORT:-8081}:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [appnet]
+    restart: unless-stopped
+    deploy: *default-resources
 
 networks:
   appnet:
