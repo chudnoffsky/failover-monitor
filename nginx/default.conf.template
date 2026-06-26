@@ -1,0 +1,25 @@
+# шаблон конфигурации nginx для тестового приложения
+# официальный образ nginx сам подставит ${MONITOR_TOKEN} из окружения!!
+
+map $http_x_auth_token $is_authorized {
+    default            0;
+    "${MONITOR_TOKEN}" 1;
+}
+
+server {
+    listen 80;
+    server_name _;
+
+    location /health {
+        if ($is_authorized = 0) {
+            return 401 "unauthorized: bad or missing token\n";
+        }
+        add_header Content-Type text/plain;
+        return 200 "healthy: $hostname\n";
+    }
+
+    location / {
+        add_header Content-Type text/plain;
+        return 200 "node: $hostname\n";
+    }
+}
