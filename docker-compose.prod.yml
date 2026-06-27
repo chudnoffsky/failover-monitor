@@ -1,0 +1,13 @@
+services:
+  monitor:
+    image: ${MONITOR_IMAGE:?нужно задать MONITOR_IMAGE для прода}
+    pull_policy: always
+    restart: always
+  app1:
+    restart: always
+  app2:
+    restart: always
+  app3:
+    restart: always
+  cadvisor:
+    restart: always
