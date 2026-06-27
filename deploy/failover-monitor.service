@@ -1,0 +1,20 @@
+# установить на сервер:
+#   sudo cp deploy/failover-monitor.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now failover-monitor.service
+
+[Unit]
+Description=Failover monitor stack (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/failover-monitor
+EnvironmentFile=/opt/failover-monitor/.env
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+
+[Install]
+WantedBy=multi-user.target
