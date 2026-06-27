@@ -1,0 +1,128 @@
+stages:
+  - lint
+  - build
+  - verify
+  - deploy
+  - cleanup
+
+variables:
+  IMAGE: $CI_REGISTRY_IMAGE/failover-monitor
+  DOCKER_TLS_CERTDIR: "/certs"
+.docker:
+  image: docker:29.6
+  services:
+    - docker:29.6-dind
+  before_script:
+    - docker info
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+lint:
+  stage: lint
+  image: python:3.13-slim
+  script:
+    - pip install --no-cache-dir ruff==0.15.20
+    - ruff check app/ || true
+    - python -m py_compile app/monitor.py app/healthcheck.py
+    - echo "синтаксис и линт пройдены!!"
+  rules:
+    - if: '$CI_COMMIT_BRANCH =~ /^feature\/.*/'
+    - if: '$CI_MERGE_REQUEST_IID'
+build:
+  extends: .docker
+  stage: build
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then
+        TAG="$CI_COMMIT_TAG"
+      else
+        TAG="development"
+      fi
+      echo "собираю образ $IMAGE:$TAG (sha=$CI_COMMIT_SHORT_SHA)"
+      docker build -t "$IMAGE:$TAG" -t "$IMAGE:$CI_COMMIT_SHORT_SHA" .
+      docker push "$IMAGE:$TAG"
+      docker push "$IMAGE:$CI_COMMIT_SHORT_SHA"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+    - if: '$CI_COMMIT_BRANCH == "development"'
+verify:
+  extends: .docker
+  stage: verify
+  script:
+    - |
+      if [ -n "$CI_COMMIT_TAG" ]; then TAG="$CI_COMMIT_TAG"; else TAG="development"; fi
+      docker pull "$IMAGE:$TAG"
+      docker run -d --name verify_monitor \
+        -e CHECK_ADDRESSES="http://127.0.0.1:8080" \
+        -e CHECK_URL="/healthz" \
+        -e CHECK_INTERVAL=2 \
+        -p 18080:8080 "$IMAGE:$TAG"
+      for i in $(seq 1 15); do
+        if docker exec verify_monitor python3 /app/healthcheck.py; then
+          echo "OK: приложение отвечает на /healthz"; PASSED=1; break
+        fi
+        echo "жду готовности... ($i)"; sleep 2
+      done
+      docker logs verify_monitor || true
+      docker rm -f verify_monitor || true
+      test "${PASSED:-0}" = "1"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+    - if: '$CI_COMMIT_BRANCH == "development"'
+deploy:development:
+  stage: deploy
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p /opt/failover-monitor/nginx"
+    - scp docker-compose.yml docker-compose.prod.yml "$DEPLOY_USER@$DEPLOY_HOST:/opt/failover-monitor/"
+    - scp nginx/default.conf.template "$DEPLOY_USER@$DEPLOY_HOST:/opt/failover-monitor/nginx/"
+    - ssh "$DEPLOY_USER@$DEPLOY_HOST"
+        "MONITOR_IMAGE=$IMAGE:development bash -s" < deploy/deploy.sh
+  environment:
+    name: development
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "development"'
+deploy:production:
+  stage: deploy
+  image: alpine:3.20
+  before_script:
+    - apk add --no-cache openssh-client
+    - eval $(ssh-agent -s)
+    - echo "$DEPLOY_SSH_KEY" | tr -d '\r' | ssh-add -
+    - mkdir -p ~/.ssh && chmod 700 ~/.ssh
+    - ssh-keyscan -H "$PROD_HOST" >> ~/.ssh/known_hosts
+  script:
+    - ssh "$PROD_USER@$PROD_HOST" "mkdir -p /opt/failover-monitor/nginx"
+    - scp docker-compose.yml docker-compose.prod.yml "$PROD_USER@$PROD_HOST:/opt/failover-monitor/"
+    - scp nginx/default.conf.template "$PROD_USER@$PROD_HOST:/opt/failover-monitor/nginx/"
+    - ssh "$PROD_USER@$PROD_HOST"
+        "MONITOR_IMAGE=$IMAGE:$CI_COMMIT_TAG bash -s" < deploy/deploy.sh
+  environment:
+    name: production
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+      when: manual
+cleanup:
+  extends: .docker
+  stage: cleanup
+  script:
+    - docker system prune -af --volumes || true
+    - |
+      apk add --no-cache curl jq >/dev/null 2>&1 || true
+      TOKEN="${REGISTRY_CLEANUP_TOKEN:-$CI_JOB_TOKEN}"
+      REPO_ID="$(curl -s --header "PRIVATE-TOKEN: $TOKEN" \
+        "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories" | jq -r '.[0].id // empty')"
+      if [ -n "$REPO_ID" ]; then
+        echo "удаляю тег $CI_COMMIT_SHORT_SHA из репозитория $REPO_ID"
+        curl -s --request DELETE --header "PRIVATE-TOKEN: $TOKEN" \
+          "$CI_API_V4_URL/projects/$CI_PROJECT_ID/registry/repositories/$REPO_ID/tags/$CI_COMMIT_SHORT_SHA" || true
+      fi
+      echo "очистка раннера и хаба выполнена!!"
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+    - if: '$CI_COMMIT_BRANCH == "development"'
+  when: always
