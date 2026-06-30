@@ -166,7 +166,18 @@ class Monitor:
         self._stop.set()
 
     def check_node(self, address):
-        url = address.rstrip("/") + "/" + self.cfg.check_url.lstrip("/")
+        """
+        есть 2 способа задания адресов:
+        первый это база + путь: CHECK_ADDRESSES="http://192.168.1.10:8080,..."
+        и CHECK_URL="/health" запрашивается http://192.168.1.10:8080/health
+         второй это целый URL: в CHECK_ADDRESSES уже полные адреса (http://192.168.1.10:8080/health), а
+         а CHECK_URL="" ну и адрес используется как есть
+        """
+        path = self.cfg.check_url.strip()
+        if path:
+            url = address.rstrip("/") + "/" + path.lstrip("/")
+        else:
+            url = address
         headers = {}
         if self.cfg.token:
             headers[self.cfg.token_header] = self.cfg.token
